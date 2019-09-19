@@ -9,17 +9,54 @@ output: html_document
 library(readr)
 library(tidyverse)
 library(caret)
+library(reshape2)
 ```
 
 # 1. Load 'em all
 
-First we load the csv file containg the top 25 news of the day.
+First we load the csv file containg the top 25 news of the day, date and an aggregated variable about the movement of the stock (up/down)
 ```{r}
-news = read_csv("data/RedditNews.csv")
+data = read_csv("data/Combined_News_DJIA.csv")
 ```
 
 And now DJIA's stock market data
 ```{r}
 stock = read_csv("data/DJIA_table.csv")
 ```
+
+# 2. Let's clean
+
+First we check if there are any missing values, if yes then fill them because most ML models don't handle missing values well.
+```{r}
+#NAs in 'data'
+sum(is.na(data)) 
+#yup, there're some - 7 to be precise
+
+#NAs in 'stock'
+sum(is.na(stock)) #Cool
+```
+
+There are some NAs in 'data' so we're going to fill them in. Probably some days were simply not interesting enough so there were less than 25 articles. We don't have to worry too much about it very much since there's just 7 of such instances. We'll simply impute the NAs with empty strings.
+```{r}
+data[is.na(data)==TRUE]=""
+
+#check for NAs again
+sum(is.na(data)) #should be 0
+```
+
+In this project we're interested in the change of stock value each day. Therefore we subtract the stock value at the end of the day and the value at the opening and save that as a new variable.
+```{r}
+stock$Diff = stock$Close - stock$Open
+```
+
+Combine 'data' and 'stock'
+```{r}
+full_data = merge(stock,data,by="Date")
+```
+
+Now there's bunch of features that we don't need. Let's get rid of them.
+```{r}
+full_data = full_data[,-2:-7]
+```
+
 
