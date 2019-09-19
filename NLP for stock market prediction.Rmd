@@ -1,0 +1,25 @@
+---
+title: "NLP for stock market prediction"
+author: "Dominik Klepl"
+date: "9/19/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(tidyverse)
+library(caret)
+```
+
+# 1. Load 'em all
+
+First we load the csv file containg the top 25 news of the day.
+```{r}
+news = read_csv("data/RedditNews.csv")
+```
+
+And now DJIA's stock market data
+```{r}
+stock = read_csv("data/DJIA_table.csv")
+```
+
