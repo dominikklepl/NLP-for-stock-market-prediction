@@ -10,6 +10,9 @@ library(readr)
 library(tidyverse)
 library(caret)
 library(reshape2)
+library(tm)
+library(tidytext)
+library(ggthemes)
 ```
 
 # 1. Load 'em all
@@ -49,14 +52,110 @@ In this project we're interested in the change of stock value each day. Therefor
 stock$Diff = stock$Close - stock$Open
 ```
 
-Combine 'data' and 'stock'
+Combine 'data' and 'stock' and remove the dataframes, they're just eating up RAM at this point.
 ```{r}
-full_data = merge(stock,data,by="Date")
+df = merge(stock,data,by="Date")
+rm(data)
+rm(stock)
 ```
 
 Now there's bunch of features that we don't need. Let's get rid of them.
 ```{r}
-full_data = full_data[,-2:-7]
+df = df[,-2:-7]
+```
+
+Check that the columns are all in correct format.
+```{r}
+sapply(df, class) #all good
+```
+
+We'll concanate all news into just one column, separating them with a token ("<n>") so that n-grams>1 can be later computed. If we didn't do this last and first word of two headlines would be treated as belonging to the same headline.
+```{r}
+df[,29] = unite(df[,4:28], "News", sep = " <n> ")
+
+#get rid of Top1-25
+df = df[,-4:-28]
+```
+
+In the text there are many characters that do not carry any meaning such as backslashes, "b\" and so on. In the following section we remove those characters using regex. To make it easier, let's try on just one datapoint before applying the function to the whole dataset.
+```{r}
+#find b" b'
+gsub('b\'', "", "b' stuff happened")
+
+#find \\ and \'
+gsub('\\\\', "", "remove \\")
+gsub('\\"', "", "remove \"")
+
+# combine all expressions together and test on real datapoint
+b = df[1,4]
+b = gsub('b"|b\'|\\\\|\\"', "", b)
+
+#now remove all punctuation except for the <n> token showing the divide between the headlines
+b = gsub("([<>])|[[:punct:]]", "\\1", b)
+
+#now we can apply both regex on the whole dataset
+df$News = gsub('b"|b\'|\\\\|\\"', "", df$News)
+df$News = gsub("([<>])|[[:punct:]]", "\\1", df$News)
+```
+
+Convert all characters to lowercase to avoid having the same words spelled differently count as different words, i.e. word and Word. Next remove all numbers as they're unlikely to carry any information.
+```{r}
+df$News = tolower(df$News)
+df$News = removeNumbers(df$News)
 ```
 
 
+# 3. Feature extraction
+Now that the text is clean we can try to compute some meaningful features. I'll be using the tidy format for working with text as suggested in [Text Mining with R](https://www.tidytextmining.com/)
+
+idf(\text{term}) = \ln{\left(\frac{n_{\text{documents}}}{n_{\text{documents containing term}}}\right)}
+```{r}
+#tidytext requires data as tibble
+df = as.tibble(df)
+tokenised = df %>% unnest_tokens(input = "News", output = "word")
+
+#also store the y variables seperatly
+ys = df[,1:3]
+```
+
+
+## 3.1 Bag of words and tf-idf
+First I'll compute simple bag of words matrix. The next step will be to compute the tf-idf for all words which is an extended bag of words. Instead of simple counting of token occurences in the documents tf-idf assigns more weight to tokens that are relatively rare in the corpus but frequent in documents.
+```{r}
+#count term frequencies - tf - how many times a token is used in documents (i.e. daily collection of headlines)
+tf = tokenised %>%
+  count(Date,word) 
+
+#count total words per day
+total_words = tf %>% 
+  group_by(Date) %>%
+  summarise(total = sum(n))
+tf_manual = left_join(tf, total_words)
+
+#compute the idf and tf-idf with tidytext internal function - faster than my clunky code above
+tf_idf =  tf %>%
+  bind_tf_idf(word, Date, n)
+
+
+tf_idf = tf_idf %>%
+  #remove the unnecessary colums, leave on Date,word and tf-idf
+  select(c(-n, -tf, -idf)) %>%
+  #remove the n token between the headlines - tidytext assumes as a new word
+  filter(word!="n") %>%
+  #remove words with tf-idf=0 - totally useless as they are in every document
+  filter(tf_idf>0)
+
+#look at distribution of tf-idf values
+round(pastecs::stat.desc(tf_idf$tf_idf),5)
+
+#QQ plot
+qplot(sample=tf_idf, data=tf_idf)+
+  labs(title = "Distribution of tf-idf values")
+#histogram
+ggplot(tf_idf, aes(tf_idf))+
+  geom_histogram(binwidth = 0.001)
+
+merged = merge(tf_idf, ys, by="Date")
+
+transpose = merged %>% spread(word, tf_idf)
+```
