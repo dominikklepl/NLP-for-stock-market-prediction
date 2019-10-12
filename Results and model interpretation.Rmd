@@ -1,0 +1,221 @@
+---
+title: "Results and model interpretation"
+author: "Dominik Klepl"
+date: "10/3/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(ggplot2)
+library(tidyverse)
+library(ggthemes)
+library(MLmetrics)
+library(gridExtra)
+library(grid)
+```
+
+```{r load data, include=FALSE}
+perf_cl = read.csv("results/class_perf.csv")
+perf_ec = read.csv("results/econ_perf.csv")
+perf_n = read.csv("results/nlp_perf.csv")
+preds = read.csv("results/compare_predictions.csv")
+```
+
+# Compare the models - Cross validation
+```{r}
+perf = rbind(perf_ec, perf_n)
+perf = perf[,-1]
+perf$Features = c(rep("7 y lags", 3), rep("NLP", 3))
+
+cv_performance = ggplot(perf, aes(x=Model, y=MSE, color=Features))+
+  geom_point(position=position_dodge(.2))+
+  geom_errorbar(aes(ymin=MSE-(1.95*SD), ymax=MSE+(1.95*SD)), width=.2, position=position_dodge(.2))+
+  theme_few()+
+  scale_color_few("Dark")+
+  labs(y= "Mean Squared Error", x=NULL)+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+ggsave("plots/cv_performance.tiff", cv_performance, width = 7, height = 7)
+cv_performance
+
+rm(perf_ec)
+rm(perf_n)
+```
+
+# Compare the models on validation data
+```{r}
+results = data.frame(Model = numeric(),
+                     MSE = numeric(),
+                     MAPE = numeric())
+n=1
+for (i in 3:ncol(preds)) {
+  string = colnames(preds)[i]
+  numeric = c(MSE(y_pred = preds[,i], y_true = preds$y_true),
+              MAPE(preds[,i], preds$y_true)*100
+  )
+  results[n,1] = string
+  results[n,2:3] = numeric
+  n = n+1
+}
+results[,2:3] = round(results[,2:3], 3)
+
+write_csv(results, "plots/Test_performance.csv")
+```
+
+And put the numbers in a nice plot
+```{r}
+#transform the data to long format
+library(reshape2)
+results_long = melt(results, id.vars="Model")
+colnames(results_long)[2]="Metric"
+
+test_plot = ggplot(results_long, aes(x=Model, y=value))+
+  geom_point(shape=4, size=3)+
+  facet_wrap(~Metric, nrow=2, scales="free")+
+  theme_few()+
+  ylab("")
+test_plot
+
+ggsave("plots/validation_perf.tiff", test_plot)
+```
+
+
+```{r}
+perf = unite(perf, "Label", c("Model", "Features"), remove = F)
+preds$Date=as.Date(preds$Date)
+
+#set up data for plotting
+upper = preds$nlp_x + 1.95*perf[perf$Label=="XGB_NLP", 4]
+lower = preds$nlp_x - 1.95*perf[perf$Label=="XGB_NLP", 4]
+diff = preds$y_true - preds$nlp_x
+diff_abs = abs(preds$y_true - preds$nlp_x)
+plot_data = data.frame(Date= preds$Date, pred = preds$nlp_x, upper = upper, lower =lower, true=preds$y_true, diff=diff, diff_abs=diff_abs)
+
+#plot predictions and true values
+plot_model = ggplot(plot_data, aes(x=Date))+
+  geom_line(aes(y=true))+
+  geom_line(aes(y=pred, color="red"))+
+  geom_line(aes(y=upper, alpha=0.3), linetype=4)+
+  geom_line(aes(y=lower, alpha=0.3), linetype=4)+
+  theme_few(base_size = 10)+
+  guides(alpha=F, color=F)+
+  labs(y="Stock value in $", caption = "A")
+plot_model
+
+#plot predictoins against true values
+pred_true = ggplot(plot_data, aes(x=true, y=pred))+
+  geom_point()+
+  theme_few(base_size = 10)+
+  labs(x="True y", y="Predicted y", caption="B")
+pred_true
+
+#plot the prediciton errors - see if there's some trend in the errors
+plot_data$Date = as.numeric(plot_data$Date)
+error_lm = lm(diff_abs ~ as.numeric(Date), plot_data)
+summary(error_lm) #the effect is significant
+plot_errors = ggplot(plot_data, aes(x=Date, y=diff_abs))+
+  geom_point()+
+  geom_smooth(method = lm, se=T)+
+  theme_few(base_size = 10)+
+  labs(y="Truth - ABS(prediction)", caption="C")
+plot_errors
+
+#arrange plots in a grid
+bottom = grid.arrange(pred_true, plot_errors, ncol=2)
+
+tiff(file="plots/diagnose_nlp.tiff") # Open a new pdf file
+grid.arrange(plot_model, bottom, nrow=2)
+dev.off() # Close the file
+```
+
+```{r}
+#set up data for plotting
+upper = preds$econ_x + 1.95*perf[perf$Label=="XGB_7 y lags", 4]
+lower = preds$econ_x - 1.95*perf[perf$Label=="XGB_7 y lags", 4]
+diff = preds$y_true - preds$econ_x
+diff_abs = abs(preds$y_true - preds$econ_x)
+plot_data = data.frame(Date= preds$Date, pred = preds$econ_x, upper = upper, lower =lower, true=preds$y_true, diff=diff, diff_abs=diff_abs)
+
+#plot predictions and true values
+plot_model = ggplot(plot_data, aes(x=Date))+
+  geom_line(aes(y=true))+
+  geom_line(aes(y=pred, color="red"))+
+  geom_line(aes(y=upper, alpha=0.3), linetype=4)+
+  geom_line(aes(y=lower, alpha=0.3), linetype=4)+
+  theme_few(base_size = 10)+
+  guides(alpha=F, color=F)+
+  labs(y="Stock value in $", caption = "A")
+plot_model
+
+#plot predictoins against true values
+pred_true = ggplot(plot_data, aes(x=true, y=pred))+
+  geom_point()+
+  theme_few(base_size = 10)+
+  labs(x="True y", y="Predicted y", caption="B")
+pred_true
+
+#plot the prediciton errors - see if there's some trend in the errors
+plot_data$Date = as.numeric(plot_data$Date)
+error_lm = lm(diff_abs ~ as.numeric(Date), plot_data)
+summary(error_lm) #the effect is significant
+plot_errors = ggplot(plot_data, aes(x=Date, y=diff_abs))+
+  geom_point()+
+  geom_smooth(method = lm, se=T)+
+  theme_few(base_size = 10)+
+  labs(y="Truth - ABS(prediction)", caption="C")
+plot_errors
+
+#arrange plots in a grid
+bottom = grid.arrange(pred_true, plot_errors, ncol=2)
+
+tiff(file="plots/diagnose_econ.tiff") # Open a new pdf file
+grid.arrange(plot_model, bottom, nrow=2)
+dev.off() # Close the file
+```
+
+
+```{r warning=FALSE}
+ggplot(preds)+
+  geom_density(aes(x=y_true))+
+  geom_density(aes(x=nlp_x, color="red"), show.legend = F)+
+  geom_density(aes(x=econ_x, color="blue"))+
+  theme_few()+
+  labs(x="Change of stock price")
+```
+
+# Hypothesis testing
+NLP models perform same as econ models using Bayesian Estimation Supersedes the T-test (BEST) method.
+```{r}
+h_test = preds[,c(3,8)]
+colnames(h_test)=c("Timeseries", "NLP")
+h_test$Timeseries = abs(h_test$Timeseries - preds$y_true)
+h_test$NLP = abs(h_test$NLP - preds$y_true)
+
+library(BayesianFirstAid)
+Bttest = bayes.t.test(h_test$Timeseries, h_test$NLP)
+Bttest
+BEST_plot = plot(Bttest)
+
+tiff("plots/best_plot.tiff")
+plot(Bttest)
+dev.off()
+```
+
+
+# Direction accuracy
+```{r}
+cols = seq(1:8)
+cols = cols[c(-1)]
+
+direction = {}
+for (i in cols) {
+  dir = ifelse(preds[,i]<0, yes="Down", no="Up")
+  direction = cbind(direction, dir)
+}
+
+direction = as.data.frame(direction)
+colnames(direction) = colnames(preds)[-1]
+```
+
+
